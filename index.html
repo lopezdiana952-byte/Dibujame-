@@ -1,1 +1,178 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#171421">
+<title>Dibujame!</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#171421;color:#f7f1ff;font-family:Arial,sans-serif}
+header{padding:22px 18px;background:#211a30}
+header h1{margin:0;font-size:27px;color:#d7b8ff}
+header p{margin:6px 0 0;color:#b9accb;font-size:13px}
+main{padding:16px;max-width:650px;margin:auto}
+button,.upload{border:0;border-radius:12px;padding:13px;background:#392b4d;color:white;font-weight:bold;font-size:14px}
+button:active{opacity:.7}
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:14px 0}
+.tools button.active{background:#a77add;color:#191222}
+.upload{display:block;text-align:center;background:#49345f;margin:12px 0}
+input[type=file]{display:none}
+.panel{background:#251e32;border-radius:16px;padding:14px;margin:12px 0}
+label{display:block;font-size:13px;color:#d9cce8;margin:13px 0 7px}
+input[type=range]{width:100%;accent-color:#c69af5}
+.workspace{position:relative;width:100%;height:55vh;min-height:300px;max-height:600px;background:#09080c;border-radius:15px;overflow:hidden;touch-action:none}
+.workspace video,.workspace img,.workspace canvas{position:absolute;width:100%;height:100%;inset:0}
+.workspace video{object-fit:contain}
+#reference{object-fit:contain;pointer-events:none;transform-origin:center}
+#drawing{touch-action:none}
+#grid{pointer-events:none;opacity:.35;background-image:linear-gradient(to right,#fff 1px,transparent 1px),linear-gradient(to bottom,#fff 1px,transparent 1px);background-size:10% 10%;display:none}
+.status{font-size:12px;color:#b9accb;text-align:center;margin:10px}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.actions button{flex:1;min-width:90px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<header>
+<h1>✏️ Dibujame!</h1>
+<p>Your personal drawing studio</p>
+</header>
+<main>
+<label class="upload" for="photo">＋ Choose a picture from gallery</label>
+<input id="photo" type="file" accept="image/*">
+<div class="tools">
+<button id="screenBtn" class="active">🖼 Screen Mode</button>
+<button id="cameraBtn">📷 Camera Mode</button>
+</div>
+<div class="workspace" id="workspace">
+<video id="video" autoplay playsinline class="hidden"></video>
+<img id="reference" class="hidden" alt="Reference image">
+<canvas id="drawing"></canvas>
+<div id="grid"></div>
+</div>
+<div class="status" id="status">Choose a picture to get started.</div>
+<div class="panel">
+<label>Image transparency <span id="opacityValue">50%</span></label>
+<input id="opacity" type="range" min="0" max="100" value="50">
+<label>Image size <span id="zoomValue">100%</span></label>
+<input id="zoom" type="range" min="30" max="200" value="100">
+<label>Image rotation <span id="rotationValue">0°</span></label>
+<input id="rotation" type="range" min="-180" max="180" value="0">
+</div>
+<div class="panel">
+<div class="actions">
+<button id="gridBtn">▦ Grid</button>
+<button id="lockBtn">🔓 Lock image</button>
+<button id="clearBtn">Clear drawing</button>
+<button id="saveBtn">Save drawing</button>
+</div>
+</div>
+<div class="status">Dibujame! · Made for your creativity ♡</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const photo=$('photo'),ref=$('reference'),video=$('video');
+const canvas=$('drawing'),ctx=canvas.getContext('2d');
+let imageURL=null,stream=null,mode='screen',locked=false,drawing=false;
+let opacity=50,zoom=100,rotation=0;
+function resizeCanvas(){
+const rect=canvas.getBoundingClientRect();
+const old=document.createElement('canvas');
+old.width=canvas.width;old.height=canvas.height;
+old.getContext('2d').drawImage(canvas,0,0);
+canvas.width=rect.width*devicePixelRatio;
+canvas.height=rect.height*devicePixelRatio;
+ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+if(old.width&&old.height)ctx.drawImage(old,0,0,old.width,old.height,0,0,rect.width,rect.height);
+}
+window.addEventListener('resize',resizeCanvas);
+resizeCanvas();
+photo.onchange=e=>{
+const file=e.target.files[0];if(!file)return;
+if(imageURL)URL.revokeObjectURL(imageURL);
+imageURL=URL.createObjectURL(file);
+ref.src=imageURL;ref.classList.remove('hidden');
+$('status').textContent='Picture loaded! Adjust it and start tracing.';
+updateImage();
+};
+function updateImage(){
+ref.style.opacity=opacity/100;
+ref.style.transform=`scale(${zoom/100}) rotate(${rotation}deg)`;
+$('opacityValue').textContent=opacity+'%';
+$('zoomValue').textContent=zoom+'%';
+$('rotationValue').textContent=rotation+'°';
+}
+$('opacity').oninput=e=>{opacity=+e.target.value;updateImage()};
+$('zoom').oninput=e=>{zoom=+e.target.value;updateImage()};
+$('rotation').oninput=e=>{rotation=+e.target.value;updateImage()};
+function setMode(next){
+mode=next;
+$('screenBtn').classList.toggle('active',mode==='screen');
+$('cameraBtn').classList.toggle('active',mode==='camera');
+video.classList.toggle('hidden',mode!=='camera');
+$('status').textContent=mode==='screen'?'Screen tracing mode':'Camera tracing mode';
+if(mode==='camera')startCamera();else stopCamera();
+}
+$('screenBtn').onclick=()=>setMode('screen');
+$('cameraBtn').onclick=()=>setMode('camera');
+async function startCamera(){
+try{
+if(!navigator.mediaDevices?.getUserMedia)throw Error('Camera not supported');
+if(!stream){
+stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+video.srcObject=stream;
+}
+}catch(e){$('status').textContent='Camera unavailable. Allow camera permission and use HTTPS.'}
+}
+function stopCamera(){
+if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null}
+}
+$('gridBtn').onclick=()=>{
+const g=$('grid');g.style.display=g.style.display==='block'?'none':'block';
+};
+$('lockBtn').onclick=()=>{
+locked=!locked;
+$('lockBtn').textContent=locked?'🔒 Unlock image':'🔓 Lock image';
+ref.style.pointerEvents=locked?'none':'auto';
+};
+let last=null;
+function point(e){
+const r=canvas.getBoundingClientRect();
+return{x:e.clientX-r.left,y:e.clientY-r.top};
+}
+canvas.addEventListener('pointerdown',e=>{
+drawing=true;last=point(e);canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove',e=>{
+if(!drawing)return;
+const p=point(e);
+ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);
+ctx.strokeStyle='#c18aff';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();
+last=p;
+});
+function endDraw(){drawing=false;last=null}
+canvas.addEventListener('pointerup',endDraw);
+canvas.addEventListener('pointercancel',endDraw);
+$('clearBtn').onclick=()=>ctx.clearRect(0,0,canvas.width,canvas.height);
+$('saveBtn').onclick=()=>{
+const out=document.createElement('canvas');
+out.width=canvas.width;out.height=canvas.height;
+const c=out.getContext('2d');
+if(mode==='camera'&&video.readyState>=2){
+c.drawImage(video,0,0,out.width,out.height);
+}else if(ref.complete&&ref.naturalWidth){
+const w=out.width*zoom/100,h=out.height*zoom/100;
+c.globalAlpha=opacity/100;
+c.translate(out.width/2,out.height/2);c.rotate(rotation*Math.PI/180);
+c.drawImage(ref,-w/2,-h/2,w,h);
+c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;
+}
+c.drawImage(canvas,0,0);
+const a=document.createElement('a');
+a.download='Dibujame-drawing.png';a.href=out.toDataURL('image/png');a.click();
+};
+</script>
+</body>
+</html>
